@@ -25,6 +25,16 @@ For the most natural-sounding audiobook, record yourself (or a voice actor) read
 - 10-30 seconds minimum, longer is better
 - Save as WAV format (24kHz mono recommended)
 
+### Sample Narrator Reference
+
+A sample narrator reference is included at `narrator.wav` (~10 seconds, 24kHz mono). This was used to test and validate the voice cloning pipeline.
+
+**Process used to validate:**
+1. Record narrator reference (10-30 seconds, WAV format)
+2. Test cloning with `test_narrator_clone.py` or `--test --narrator narrator.wav`
+3. Compare original and clone using `voice_compare.wav`
+4. If satisfied, run full generation with `--narrator narrator.wav`
+
 ### Requirements
 
 - **OS:** Linux (tested on Ubuntu with kernel 6.17)
@@ -174,7 +184,9 @@ slave-to-the-gods/
 ├── story-bible/                       # World-building notes
 ├── world-building/                    # Setting details
 ├── assets/                            # Images, covers, etc.
-├── manuscript_to_audiobook.py         # Audiobook generation script
+├── narrator.wav                       # Narrator reference for voice cloning
+├── test_narrator_clone.py             # Test script for voice cloning
+├── manuscript_to_audiobook.py          # Audiobook generation script
 └── README.md                          # This file
 ```
 
