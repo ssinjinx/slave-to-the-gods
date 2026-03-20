@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """
 manuscript_to_audiobook.py
-Convert Slave to the Gods manuscript to audiobook using Qwen3-TTS VoiceDesign.
+Convert manuscript to audiobook using Qwen3-TTS with voice cloning.
+
+Two modes:
+  1. VoiceDesign (text description) - default, no reference needed
+  2. Voice Clone (reference audio)  - use --narrator to specify .wav file
 
 Usage:
-    python manuscript_to_audiobook.py                    # Process full manuscript
-    python manuscript_to_audiobook.py --test             # Process first 100 words only
-    python manuscript_to_audiobook.py --resume            # Resume from last checkpoint
-    python manuscript_to_audiobook.py --chapters 1,2,3    # Process specific chapters only
+    python manuscript_to_audiobook.py                           # Full manuscript, VoiceDesign
+    python manuscript_to_audiobook.py --narrator narrator.wav  # Full manuscript, voice clone
+    python manuscript_to_audiobook.py --test                    # First 100 words only
+    python manuscript_to_audiobook.py --resume                  # Resume from checkpoint
+    python manuscript_to_audiobook.py --chapters 1,2,3         # Specific chapters
 """
 
 import argparse
@@ -25,7 +30,7 @@ CHECKPOINT_FILE = OUTPUT_DIR / ".checkpoint.json"
 CHUNK_SIZE = 150  # words per chunk (optimal for TTS quality)
 SAMPLE_RATE = 24000
 
-# Voice description for epic older narrator
+# Voice description for epic older narrator (used in VoiceDesign mode)
 VOICE_DESCRIPTION = (
     "An epic older man's voice, deep and resonant with gravitas, "
     "warm yet commanding, measured cadence like a wise elder "
@@ -48,7 +53,6 @@ def split_into_chunks(text, chunk_size=CHUNK_SIZE):
         word_count = len(sentence.split())
         
         if current_word_count + word_count > chunk_size and current_chunk:
-            # Save current chunk and start new one
             chunks.append(' '.join(current_chunk))
             current_chunk = [sentence]
             current_word_count = word_count
@@ -56,7 +60,6 @@ def split_into_chunks(text, chunk_size=CHUNK_SIZE):
             current_chunk.append(sentence)
             current_word_count += word_count
     
-    # Don't forget the last chunk
     if current_chunk:
         chunks.append(' '.join(current_chunk))
     
@@ -64,7 +67,6 @@ def split_into_chunks(text, chunk_size=CHUNK_SIZE):
 
 def extract_chapters(text):
     """Extract chapters from markdown manuscript."""
-    # Split on chapter markers (## or #)
     chapter_pattern = r'(?:^|\n)(#{1,2}\s+[^\n]+)'
     parts = re.split(chapter_pattern, text)
     
@@ -74,37 +76,24 @@ def extract_chapters(text):
     
     for i, part in enumerate(parts):
         if part.startswith('#'):
-            # Save previous chapter if exists
             if current_content.strip():
-                chapters.append({
-                    'title': current_title,
-                    'content': current_content.strip()
-                })
+                chapters.append({'title': current_title, 'content': current_content.strip()})
             current_title = part.lstrip('#').strip()
             current_content = ""
         else:
             current_content += part
     
-    # Don't forget the last chapter
     if current_content.strip():
-        chapters.append({
-            'title': current_title,
-            'content': current_content.strip()
-        })
+        chapters.append({'title': current_title, 'content': current_content.strip()})
     
     return chapters
 
 def clean_text(text):
     """Clean markdown formatting from text."""
-    # Remove markdown headers
     text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
-    # Remove markdown formatting
     text = re.sub(r'\*\*|__|\*|_|`', '', text)
-    # Remove links but keep text
     text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
-    # Remove horizontal rules
     text = re.sub(r'^---+$', '', text, flags=re.MULTILINE)
-    # Normalize whitespace
     text = re.sub(r'\n+', ' ', text)
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
@@ -128,8 +117,8 @@ def load_checkpoint():
             return json.load(f)
     return None
 
-def generate_audio_chunk(text, output_path, model):
-    """Generate audio for a single text chunk."""
+def generate_audio_chunk_voice_design(text, output_path, model):
+    """Generate audio using text-based voice description."""
     import soundfile as sf
     
     audios, sr = model.generate_voice_design(
@@ -141,8 +130,23 @@ def generate_audio_chunk(text, output_path, model):
     sf.write(str(output_path), audios[0], sr)
     return output_path
 
+def generate_audio_chunk_voice_clone(text, output_path, model, ref_audio, ref_sr):
+    """Generate audio using voice cloning from reference."""
+    import soundfile as sf
+    
+    audios, sr = model.generate_voice_clone(
+        text=text,
+        language="english",
+        ref_audio=(ref_audio, ref_sr),
+        ref_text=None,
+        x_vector_only_mode=True  # Use embedding-only mode (no transcript needed)
+    )
+    
+    sf.write(str(output_path), audios[0], sr)
+    return output_path
+
 def merge_audio_files(audio_files, output_path):
-    """Merge multiple WAV files into one."""
+    """Merge multiple WAV files into one with silence gaps."""
     import soundfile as sf
     import numpy as np
     
@@ -167,15 +171,28 @@ def merge_audio_files(audio_files, output_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Convert manuscript to audiobook")
-    parser.add_argument("--test", action="store_true", help="Process only first 100 words")
+    parser.add_argument("--narrator", type=str, default=None,
+                        help="Path to narrator reference .wav file for voice cloning")
+    parser.add_argument("--test", action="store_true", help="Process first 100 words only")
     parser.add_argument("--resume", action="store_true", help="Resume from checkpoint")
     parser.add_argument("--chapters", type=str, help="Process specific chapters (e.g., 1,2,3)")
     parser.add_argument("--output", type=str, default="slave-to-the-gods-audiobook.wav",
                         help="Output filename")
     args = parser.parse_args()
     
-    # Ensure output directory exists
     OUTPUT_DIR.mkdir(exist_ok=True)
+    
+    # Determine mode
+    use_voice_clone = args.narrator is not None
+    
+    if use_voice_clone:
+        log(f"Mode: VOICE CLONE")
+        log(f"Narrator reference: {args.narrator}")
+        import soundfile as sf
+        ref_audio, ref_sr = sf.read(args.narrator)
+        log(f"Reference audio: {len(ref_audio)} samples @ {ref_sr}Hz ({len(ref_audio)/ref_sr:.1f}s)")
+    else:
+        log("Mode: VOICE DESIGN (text description)")
     
     # Read manuscript
     log(f"Reading manuscript: {MANUSCRIPT_PATH}")
@@ -186,29 +203,30 @@ def main():
     chapters = extract_chapters(manuscript)
     log(f"Found {len(chapters)} chapters")
     
-    # Filter chapters if specified
     if args.chapters:
         chapter_nums = [int(x.strip()) - 1 for x in args.chapters.split(',')]
         chapters = [chapters[i] for i in chapter_nums if i < len(chapters)]
         log(f"Processing {len(chapters)} selected chapters")
     
-    # Test mode: only first 100 words
+    # Test mode
     if args.test:
-        log("TEST MODE: Processing first 100 words only")
+        log("TEST MODE: First 100 words only")
         full_text = clean_text(manuscript)
         words = full_text.split()[:100]
         test_text = ' '.join(words)
         
-        log("Loading Qwen3-TTS VoiceDesign model...")
+        model_name = "Qwen/Qwen3-TTS-12Hz-1.7B-Base" if use_voice_clone else "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+        log(f"Loading model: {model_name}")
         from qwen_tts import Qwen3TTSModel
-        model = Qwen3TTSModel.from_pretrained(
-            "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-            device_map="cuda:0"
-        )
+        model = Qwen3TTSModel.from_pretrained(model_name, device_map="cuda:0")
         
         output_path = OUTPUT_DIR / "test_sample.wav"
-        log(f"Generating test audio: {output_path}")
-        generate_audio_chunk(test_text, output_path, model)
+        
+        if use_voice_clone:
+            generate_audio_chunk_voice_clone(test_text, output_path, model, ref_audio, ref_sr)
+        else:
+            generate_audio_chunk_voice_design(test_text, output_path, model)
+        
         log(f"Test complete! Saved to: {output_path}")
         return
     
@@ -221,15 +239,18 @@ def main():
         log(f"Resuming from Chapter {start_chapter + 1}, Chunk {start_chunk}")
     
     # Load TTS model
-    log("Loading Qwen3-TTS VoiceDesign model (1.7B)...")
+    if use_voice_clone:
+        model_name = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+        log(f"Loading Qwen3-TTS 1.7B Base (voice clone mode)...")
+    else:
+        model_name = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+        log(f"Loading Qwen3-TTS 1.7B VoiceDesign (voice design mode)...")
+    
     from qwen_tts import Qwen3TTSModel
-    model = Qwen3TTSModel.from_pretrained(
-        "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign",
-        device_map="cuda:0"
-    )
+    model = Qwen3TTSModel.from_pretrained(model_name, device_map="cuda:0")
     log("Model loaded successfully")
     
-    # Process each chapter
+    # Process chapters
     all_chapter_files = []
     
     for chapter_idx, chapter in enumerate(chapters[start_chapter:], start=start_chapter):
@@ -237,18 +258,14 @@ def main():
         log(f"Processing Chapter {chapter_idx + 1}: {chapter['title']}")
         log(f"{'='*60}")
         
-        # Clean and chunk the chapter
         clean_content = clean_text(chapter['content'])
         chunks = split_into_chunks(clean_content)
         log(f"Split into {len(chunks)} chunks")
         
-        # Create chapter output directory
         chapter_dir = OUTPUT_DIR / f"chapter_{chapter_idx + 1:03d}"
         chapter_dir.mkdir(exist_ok=True)
         
         chapter_audio_files = []
-        
-        # Process chunks
         chunk_start = start_chunk if chapter_idx == start_chapter else 0
         
         for chunk_idx, chunk in enumerate(chunks[chunk_start:], start=chunk_start):
@@ -257,10 +274,12 @@ def main():
             log(f"  Chunk {chunk_idx + 1}/{len(chunks)} ({len(chunk.split())} words)...")
             
             try:
-                generate_audio_chunk(chunk, chunk_file, model)
-                chapter_audio_files.append(chunk_file)
+                if use_voice_clone:
+                    generate_audio_chunk_voice_clone(chunk, chunk_file, model, ref_audio, ref_sr)
+                else:
+                    generate_audio_chunk_voice_design(chunk, chunk_file, model)
                 
-                # Save checkpoint after each chunk
+                chapter_audio_files.append(chunk_file)
                 save_checkpoint(chapter_idx, chunk_idx, len(chunks))
                 
             except Exception as e:
@@ -268,7 +287,6 @@ def main():
                 log("Checkpoint saved. Resume with --resume flag.")
                 raise
         
-        # Merge chapter audio
         if chapter_audio_files:
             chapter_output = OUTPUT_DIR / f"chapter_{chapter_idx + 1:03d}_{chapter['title'][:30].replace(' ', '_')}.wav"
             log(f"Merging chapter audio: {chapter_output.name}")
@@ -276,10 +294,9 @@ def main():
             all_chapter_files.append(chapter_output)
             log(f"Chapter {chapter_idx + 1} complete!")
         
-        # Reset start_chunk for subsequent chapters
         start_chunk = 0
     
-    # Final merge: all chapters into one audiobook
+    # Final merge
     if all_chapter_files:
         final_output = OUTPUT_DIR / args.output
         log(f"\n{'='*60}")
@@ -287,18 +304,18 @@ def main():
         log(f"{'='*60}")
         merge_audio_files(all_chapter_files, final_output)
         
-        # Clean up checkpoint
         if CHECKPOINT_FILE.exists():
             CHECKPOINT_FILE.unlink()
         
-        # Print summary
         log(f"\n{'='*60}")
         log("AUDIOBOOK GENERATION COMPLETE!")
         log(f"{'='*60}")
         log(f"Output: {final_output}")
         log(f"Chapters: {len(all_chapter_files)}")
+        log(f"Mode: {'Voice Clone' if use_voice_clone else 'Voice Design'}")
+        if use_voice_clone:
+            log(f"Narrator: {args.narrator}")
         
-        # Calculate approximate duration
         import soundfile as sf
         total_samples = 0
         for f in all_chapter_files:

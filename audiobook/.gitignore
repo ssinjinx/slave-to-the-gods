@@ -1,0 +1,5 @@
+# Ignore all audio files - they can be regenerated
+*.wav
+
+# Keep these files
+!.gitignore

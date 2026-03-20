@@ -8,17 +8,30 @@ This repository includes a complete pipeline for converting the manuscript into 
 
 ### Overview
 
-The audiobook is generated using **Qwen3-TTS** (1.7B parameter model) with **VoiceDesign** mode, which creates a custom narrator voice from a text description—no voice sample required.
+The audiobook is generated using **Qwen3-TTS** (1.7B parameter model) with two modes:
 
-**Narrator Voice:** *An epic older man's voice, deep and resonant with gravitas, warm yet commanding, measured cadence like a wise elder recounting ancient tales across centuries.*
+1. **VoiceDesign** (default) — Creates a custom narrator voice from a text description
+2. **Voice Clone** — Uses your own narrator voice recording for consistent, realistic voice throughout
+
+**VoiceDesign narrator voice:** *An epic older man's voice, deep and resonant with gravitas, warm yet commanding, measured cadence like a wise elder recounting ancient tales across centuries.*
+
+### Voice Clone Mode (Recommended)
+
+For the most natural-sounding audiobook, record yourself (or a voice actor) reading for 10-30 seconds, then use that as the reference. The TTS will clone your narrator's voice for the entire book.
+
+**Recording tips:**
+- Use a clean, quiet recording
+- Speak in the tone and pace you want for the audiobook
+- 10-30 seconds minimum, longer is better
+- Save as WAV format (24kHz mono recommended)
 
 ### Requirements
 
 - **OS:** Linux (tested on Ubuntu with kernel 6.17)
 - **GPU:** AMD Radeon RX 7900 XTX (24GB VRAM) with ROCm
 - **ROCm:** 7.2.0+ installed at `/opt/rocm-7.2.0`
-- **Python:** 3.12 via conda
-- **Storage:** ~5GB for model + output files
+- **Python:** 3.12+ via conda
+- **Storage:** ~5GB for models + output files
 
 ### Software Setup
 
@@ -41,21 +54,29 @@ python3 -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device
 ### Usage
 
 #### Quick Test (100 words)
-Test the voice before processing the full manuscript:
+Test voice before processing the full manuscript:
 ```bash
+# VoiceDesign mode (text description)
 python3 manuscript_to_audiobook.py --test
+
+# Voice Clone mode (use your narrator reference)
+python3 manuscript_to_audiobook.py --test --narrator narrator.wav
 ```
 Output: `audiobook/test_sample.wav`
 
 #### Generate Full Audiobook
 Process the entire manuscript:
 ```bash
+# VoiceDesign mode
 python3 manuscript_to_audiobook.py
+
+# Voice Clone mode (recommended for consistent voice)
+python3 manuscript_to_audiobook.py --narrator narrator.wav
 ```
 Output: `audiobook/slave-to-the-gods-audiobook.wav`
 
 #### Resume from Interruption
-If the process is interrupted, resume where it left off:
+If interrupted, resume where you left off:
 ```bash
 python3 manuscript_to_audiobook.py --resume
 ```
@@ -80,18 +101,22 @@ audiobook/
 
 ### Processing Details
 
+- **Modes:** VoiceDesign (text description) or Voice Clone (reference audio)
 - **Chunk size:** 150 words per chunk (optimal for TTS quality)
 - **Sample rate:** 24kHz, 16-bit PCM WAV
 - **Estimated duration:** ~3.5-4 hours of audio
 - **Processing time:** 4-6 hours on 7900 XTX
 - **Output format:** Individual chapter files + final merged audiobook
+- **Checkpointing:** Progress saved after every chunk (resumable with `--resume`)
 
 ### How It Works
 
 1. **Parse manuscript** — Extracts chapters from markdown
 2. **Clean text** — Removes markdown formatting, normalizes whitespace
 3. **Smart chunking** — Splits at sentence boundaries (no mid-sentence cuts)
-4. **TTS generation** — Each chunk processed through Qwen3-TTS VoiceDesign
+4. **TTS generation** — Each chunk processed through Qwen3-TTS
+   - VoiceDesign mode: Uses text description to generate voice
+   - Voice Clone mode: Uses x-vector embedding from your narrator reference
 5. **Checkpointing** — Saves progress after every chunk (resumable)
 6. **Chapter merge** — Combines chunks into chapter files
 7. **Final merge** — Combines all chapters into complete audiobook
@@ -114,8 +139,9 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 
 | Component | Tool |
 |-----------|------|
-| TTS Model | Qwen3-TTS 1.7B VoiceDesign |
+| TTS Model | Qwen3-TTS 1.7B (Base or VoiceDesign) |
 | GPU Compute | AMD ROCm 7.2.0 |
+| Voice Clone | x-vector embedding (x_vector_only_mode=True) |
 | Audio Processing | soundfile |
 | Checkpointing | JSON-based resume system |
 
